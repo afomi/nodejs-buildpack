@@ -14,8 +14,31 @@ describe 'CF NodeJS Buildpack' do
 
     it 'resolves to a nodeJS version successfully' do
       expect(app).to be_running
-      expect(app).to_not have_logged 'Downloading and installing node 4.2.0'
-      expect(app).to have_logged /Downloading and installing node 4\.2\.5/
+      expect(app).to have_logged /Downloading and installing node 4\.\d+\.\d+/
+
+      browser.visit_path('/')
+      expect(browser).to have_body('Hello, World!')
+    end
+  end
+
+  context 'when specifying a version 5 for the nodeJS version in the package.json' do
+    let(:app_name) { 'node_web_app_with_version_5' }
+
+    it 'resolves to a nodeJS version successfully' do
+      expect(app).to be_running
+      expect(app).to have_logged /Downloading and installing node 5\.\d+\.\d+/
+
+      browser.visit_path('/')
+      expect(browser).to have_body('Hello, World!')
+    end
+  end
+
+  context 'when specifying a version 6 for the nodeJS version in the package.json' do
+    let(:app_name) { 'node_web_app_with_version_6' }
+
+    it 'resolves to a nodeJS version successfully' do
+      expect(app).to be_running
+      expect(app).to have_logged /Downloading and installing node 6\.\d+\.\d+/
 
       browser.visit_path('/')
       expect(browser).to have_body('Hello, World!')
@@ -27,7 +50,7 @@ describe 'CF NodeJS Buildpack' do
 
     it 'resolves to the stable nodeJS version successfully' do
       expect(app).to be_running
-      expect(app).to have_logged /Downloading and installing node 0\.12\.9/
+      expect(app).to have_logged /Downloading and installing node 4\.\d+\.\d+/
 
       browser.visit_path('/')
       expect(browser).to have_body('Hello, World!')
@@ -88,10 +111,14 @@ describe 'CF NodeJS Buildpack' do
     it 'successfully deploys and vendors the dependencies' do
       expect(app).to be_running
       expect(Dir).to_not exist("cf_spec/fixtures/#{app_name}/node_modules")
-      expect(app).to have_file 'app/node_modules'
+      expect(app).to have_file '/app/node_modules'
 
       browser.visit_path('/')
       expect(browser).to have_body('Hello, World!')
+    end
+
+    it "uses a proxy during staging if present", :uncached do
+      expect(app).to use_proxy_during_staging
     end
   end
 
@@ -101,8 +128,8 @@ describe 'CF NodeJS Buildpack' do
     it 'downloads missing dependencies from package.json' do
       expect(app).to be_running
       expect(Dir).to_not exist("cf_spec/fixtures/node_web_app_with_incomplete_node_modules/node_modules/hashish")
-      expect(app).to have_file("app/node_modules/hashish")
-      expect(app).to have_file("app/node_modules/express")
+      expect(app).to have_file("/app/node_modules/hashish")
+      expect(app).to have_file("/app/node_modules/express")
     end
   end
 
@@ -112,14 +139,50 @@ describe 'CF NodeJS Buildpack' do
     it 'does not overwrite the vendored modules not listed in package.json' do
       expect(app).to be_running
 
-      replacement_app = Machete::App.new(app_name, Machete::Host.create)
+      replacement_app = Machete::App.new(app_name)
       app_push_command = Machete::CF::PushApp.new
       app_push_command.execute(replacement_app)
       expect(replacement_app).to be_running
 
-      expect(app).to have_file("app/node_modules/logfmt")
-      expect(app).to have_file("app/node_modules/express")
-      expect(app).to have_file("app/node_modules/hashish")
+      expect(app).to have_file("/app/node_modules/logfmt")
+      expect(app).to have_file("/app/node_modules/express")
+      expect(app).to have_file("/app/node_modules/hashish")
+    end
+  end
+
+  context 'with a cached buildpack in an air gapped environment', :cached do
+    before(:each) do
+      `cf unbind-staging-security-group public_networks`
+      `cf unbind-staging-security-group dns`
+    end
+
+    after(:each) do
+      `cf bind-staging-security-group public_networks`
+      `cf bind-staging-security-group dns`
+    end
+
+    context 'with no npm version specified' do
+      let (:app_name) { 'node_web_app_airgapped_no_npm_version' }
+
+      subject(:app) do
+        Machete.deploy_app(app_name, env: {'BP_DEBUG' => '1'})
+      end
+
+      it 'is running with the default version of npm' do
+        expect(app).to be_running
+        expect(app).not_to have_internet_traffic
+        expect(app).to have_logged("Using default npm version")
+        expect(app).to have_logged('DEBUG: default_version_for node is')
+      end
+    end
+
+    context 'with invalid npm version specified' do
+      let (:app_name) { 'node_web_app_airgapped_invalid_npm_version' }
+
+      it 'is not running and prints an error message' do
+        expect(app).not_to be_running
+        expect(app).to have_logged("We're unable to download the version of npm")
+      end
     end
   end
 end
